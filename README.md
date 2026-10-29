@@ -127,3 +127,7 @@ Layout: `main.go` (CLI), `vault.go` (crypto and storage), `totp.go`, `sync.go`
 
 Note: the encryption header authenticates the original format tag `motp`, kept so
 vaults created before the rename still open.
+
+## License
+
+[MIT](LICENSE)
