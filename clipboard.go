@@ -74,13 +74,11 @@ func emit(value string, toClipboard bool) error {
 	}
 	ttl := clearAfter()
 	if ttl == 0 {
-		fmt.Fprintln(os.Stderr, "copied to clipboard")
 		return nil
 	}
 	if err := spawnClear(value, ttl); err != nil {
 		fmt.Fprintln(os.Stderr, "gpass: warning: could not schedule clipboard clear:", err)
 	}
-	fmt.Fprintf(os.Stderr, "copied to clipboard, clears in %ds\n", int(ttl.Seconds()))
 	return nil
 }
 
