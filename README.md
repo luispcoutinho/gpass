@@ -27,6 +27,18 @@ gpass get github              # print the password
 gpass otp github | pbcopy     # copy the current TOTP code
 ```
 
+### Picker and clipboard
+
+Without a name, `get` and `otp` open an fzf-style picker: type to filter (fuzzy, several
+space-separated terms, matches name and username), up/down or ctrl-p/ctrl-n to move,
+Enter to select, Esc or ctrl-c to cancel. It needs a terminal; with piped stdin a name is
+required, and if stderr is redirected it falls back to a numbered list.
+
+`-c` copies the value to the clipboard instead of printing it (`pbcopy` on macOS,
+`wl-copy`, `xclip` or `xsel` on Linux). A detached helper clears the clipboard after 30
+seconds, but only if it still holds that value. Set `GPASS_CLEAR_AFTER=<seconds>` to change
+the delay, or `0` to keep the value.
+
 Secrets are always prompted for (no echo), never passed as arguments, so they stay
 out of shell history. When stdin is not a terminal, secrets are read from stdin,
 one per line, which allows scripting.
@@ -36,10 +48,10 @@ one per line, which allows scripting.
 | Command | Description |
 |---|---|
 | `gpass init [folder]` | Create a vault in `folder` (asks if omitted; default: current folder) |
-| `gpass add <name> [-u user] [-g] [-l len]` | Add or update an entry |
+| `gpass add [name] [-u user] [-g] [-l len]` | Add or update an entry. Without a name it asks for name, username, password (empty = generate) and OTP |
 | `gpass edit <name> [-u user] [-n newname] [-p] [-g] [-l len] [-o] [-clear-otp]` | Change fields of an entry |
-| `gpass get <name> [-u]` | Print the password, or the username with `-u` |
-| `gpass otp <name>` | Print the current TOTP code |
+| `gpass get [name] [-u] [-c]` | Print the password, or the username with `-u`. `-c` copies it to the clipboard instead. Without a name it opens the picker |
+| `gpass otp [name] [-c]` | Print the current TOTP code, or copy it with `-c`. Without a name the picker lists entries that have an OTP |
 | `gpass ls` | List entries (name, username, OTP, last updated) |
 | `gpass rm <name>` | Remove an entry |
 | `gpass passwd` | Change the master password |

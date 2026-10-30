@@ -21,13 +21,14 @@ const usage = `gpass - minimal password and OTP manager
 
 usage:
   gpass init [folder]               create a vault in folder (asks; default: current folder)
-  gpass add <name> [-u user] [-g] [-l len]
-                                    add or update an entry (prompts for secrets)
+  gpass add [name] [-u user] [-g] [-l len]
+                                    add or update an entry (no name: asks for every detail)
   gpass edit <name> [-u user] [-n newname] [-p] [-g] [-l len] [-o] [-clear-otp]
                                     change fields of an existing entry
   gpass passwd                       change the master password
-  gpass get <name> [-u]              print the password (or username with -u)
-  gpass otp <name>                   print the current TOTP code
+  gpass get [name] [-u] [-c]        print the password (or username with -u); no name: pick from a list
+                                    -c copies to the clipboard instead (cleared after 30s)
+  gpass otp [name] [-c]             print the current TOTP code; no name: pick from a list
   gpass ls                           list entry names
   gpass rm <name>                    remove an entry
   gpass gen [-l len]                 generate a random password
@@ -111,6 +112,8 @@ func run(args []string) error {
 	switch cmd {
 	case "gen":
 		return cmdGen(rest)
+	case "_clear":
+		return cmdClear(rest)
 	case "git":
 		return cmdGit(rest)
 	case "init":
@@ -248,13 +251,34 @@ func cmdAdd(path string, args []string) error {
 	user := fs.String("u", "", "username")
 	gen := fs.Bool("g", false, "generate a random password")
 	length := fs.Int("l", 24, "generated password length")
-	name, err := splitName(fs, args)
+	name, err := optName(fs, args)
 	if err != nil {
 		return err
+	}
+	interactive := name == ""
+	if interactive && !stdinTTY() {
+		return errors.New("usage: gpass add <name> [flags]")
 	}
 	v, pw, err := openVault(path, true)
 	if err != nil {
 		return err
+	}
+	if interactive {
+		if name, err = promptLine("Name"); err != nil {
+			return err
+		}
+		if name == "" {
+			return errors.New("name is required")
+		}
+		if *user == "" {
+			label := "Username"
+			if cur := v.Entries[name].Username; cur != "" {
+				label += " [" + cur + "]"
+			}
+			if *user, err = promptLine(label); err != nil {
+				return err
+			}
+		}
 	}
 	e := v.Entries[name]
 	if *user != "" {
@@ -268,12 +292,25 @@ func cmdAdd(path string, args []string) error {
 		e.Password = p
 		fmt.Fprintln(os.Stderr, "generated password for", name)
 	} else {
-		p, err := prompt("Password (empty to keep/skip)")
+		label := "Password (empty to keep/skip)"
+		genIfEmpty := interactive && e.Password == ""
+		if genIfEmpty {
+			label = "Password (empty = generate)"
+		}
+		p, err := prompt(label)
 		if err != nil {
 			return err
 		}
-		if len(p) > 0 {
+		switch {
+		case len(p) > 0:
 			e.Password = string(p)
+		case genIfEmpty:
+			g, err := generate(*length)
+			if err != nil {
+				return err
+			}
+			e.Password = g
+			fmt.Fprintln(os.Stderr, "generated password for", name)
 		}
 	}
 	o, err := prompt("OTP secret or otpauth:// URI (empty to skip)")
@@ -415,47 +452,69 @@ func lookup(v *Vault, name string) (Entry, error) {
 func cmdGet(path string, args []string) error {
 	fs := flag.NewFlagSet("get", flag.ContinueOnError)
 	user := fs.Bool("u", false, "print username instead of password")
-	name, err := splitName(fs, args)
+	cp := fs.Bool("c", false, "copy to clipboard instead of printing")
+	name, err := optName(fs, args)
 	if err != nil {
 		return err
+	}
+	if name == "" && !stdinTTY() {
+		return errors.New("usage: gpass get [name] [-u] [-c]")
 	}
 	v, _, err := openVault(path, false)
 	if err != nil {
 		return err
+	}
+	if name == "" {
+		if name, err = pick(v, nil, "usage: gpass get [name] [-u] [-c]"); err != nil {
+			return err
+		}
 	}
 	e, err := lookup(v, name)
 	if err != nil {
 		return err
 	}
+	val := e.Password
 	if *user {
-		printValue(e.Username)
-	} else {
-		printValue(e.Password)
+		val = e.Username
 	}
-	return nil
+	return emit(val, *cp)
 }
 
 func cmdOTP(path string, args []string) error {
-	if len(args) != 1 {
-		return errors.New("usage: gpass otp <name>")
+	const usage = "usage: gpass otp [name] [-c]"
+	fs := flag.NewFlagSet("otp", flag.ContinueOnError)
+	cp := fs.Bool("c", false, "copy to clipboard instead of printing")
+	name, err := optName(fs, args)
+	if err != nil {
+		return err
+	}
+	if fs.NArg() > 0 || (name == "" && !stdinTTY()) {
+		return errors.New(usage)
 	}
 	v, _, err := openVault(path, false)
 	if err != nil {
 		return err
 	}
-	e, err := lookup(v, args[0])
+	if name == "" {
+		if name, err = pick(v, func(e Entry) bool { return e.OTP != "" }, usage); err != nil {
+			return err
+		}
+	}
+	e, err := lookup(v, name)
 	if err != nil {
 		return err
 	}
 	if e.OTP == "" {
-		return fmt.Errorf("entry %q has no OTP secret", args[0])
+		return fmt.Errorf("entry %q has no OTP secret", name)
 	}
 	p, err := parseOTP(e.OTP)
 	if err != nil {
 		return err
 	}
 	code, left := p.code(time.Now())
-	printValue(code)
+	if err := emit(code, *cp); err != nil {
+		return err
+	}
 	if left < 5 {
 		fmt.Fprintf(os.Stderr, "expires in %ds\n", left)
 	}
