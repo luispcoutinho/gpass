@@ -37,7 +37,12 @@ usage:
   gpass touchid enable|disable|status
                                     unlock with Touch ID instead of typing the master password (macOS)
   gpass sync                        pull then push the vault repo
+  gpass lock                        end the unlock session now (see below)
   gpass where                       print the vault path in use
+
+unlock session: after you unlock the vault interactively, later commands skip the master
+password and Touch ID until 60s after the last use. GPASS_SESSION_SECONDS=<n> changes the
+window, 0 disables it. passwd and touchid enable always ask for the typed password.
 
 global flag (before the command):
   -f <path>                         use this vault file for this run
@@ -75,9 +80,25 @@ func openVault(path string, write bool) (*Vault, []byte, error) {
 	if write {
 		autoPull(path)
 	}
+	useSession := sessionUsable()
+	if useSession {
+		if pw := sessionPassword(path); pw != nil {
+			v, err := Load(path, pw)
+			if err == nil {
+				return v, pw, nil
+			}
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, nil, errors.New("no vault found, run `gpass init`")
+			}
+			sessionLock(path) // cached password no longer opens the vault
+		}
+	}
 	if pw := touchIDPassword(path); pw != nil {
 		v, err := Load(path, pw)
 		if err == nil {
+			if useSession {
+				startSession(path, pw)
+			}
 			return v, pw, nil
 		}
 		if errors.Is(err, os.ErrNotExist) {
@@ -92,6 +113,9 @@ func openVault(path string, write bool) (*Vault, []byte, error) {
 	v, err := Load(path, pw)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, errors.New("no vault found, run `gpass init`")
+	}
+	if err == nil && useSession {
+		startSession(path, pw)
 	}
 	return v, pw, err
 }
@@ -114,6 +138,8 @@ func run(args []string) error {
 		return cmdGen(rest)
 	case "_clear":
 		return cmdClear(rest)
+	case "_agent":
+		return cmdAgent(rest)
 	case "git":
 		return cmdGit(rest)
 	case "init":
@@ -129,6 +155,10 @@ func run(args []string) error {
 		return nil
 	case "touchid":
 		return cmdTouchID(path, rest)
+	case "lock":
+		sessionLock(path)
+		fmt.Fprintln(os.Stderr, "vault locked")
+		return nil
 	case "sync":
 		return cmdSync(path)
 	case "add":
@@ -423,6 +453,7 @@ func cmdPasswd(path string) error {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "master password changed")
+	sessionLock(path) // any cached session holds the old password
 	if acct := keychainAccount(path); keychainExists(acct) {
 		if err := keychainSet(acct, pw); err != nil {
 			fmt.Fprintln(os.Stderr, "gpass: warning: could not update Touch ID password:", err)

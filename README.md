@@ -59,6 +59,7 @@ one per line, which allows scripting.
 | `gpass git [repo-url] [dir]` | Keep the vault in a git repo |
 | `gpass sync` | Pull then push the vault repo |
 | `gpass touchid enable\|disable\|status` | Manage Touch ID unlock (macOS) |
+| `gpass lock` | End the unlock session now |
 | `gpass where` | Print the vault path in use |
 
 Values from `get`, `otp` and `gen` are printed without a trailing newline when piped,
@@ -107,6 +108,30 @@ stay local. `gpass sync` does a manual pull and push.
 - Pulls are fast-forward only. Two machines editing at once need a manual resolve in
   git, because the vault is a single file.
 - Git credentials and commit identity come from your own git setup.
+
+## Unlock session
+
+After you unlock the vault interactively (typed password or Touch ID), later commands
+do not ask again until **60 seconds after the last use**. Each command extends the window.
+
+```bash
+gpass ls          # asks once
+gpass get github  # no prompt
+gpass lock        # end the session early
+```
+
+A small detached `gpass` process keeps the master password in memory only and hands it to
+later runs over a unix socket in a private `0700` directory under the system temp dir (owned
+by your user, `0600` socket, no core dumps). It exits and zeroes the password when the window
+ends, when you run `gpass lock`, or after `gpass passwd`. The password is passed to it over
+stdin, never on the command line.
+
+- `GPASS_SESSION_SECONDS=<n>` changes the window; `0` turns sessions off.
+- Sessions are for interactive terminals only. Piped runs always read the password from stdin.
+- `passwd` and `touchid enable` always ask for the typed password.
+- Each vault has its own session. Any process running as your user can ask the agent for
+  the password while a session is active, so keep the window short on shared machines.
+- Not available on Windows (every run asks).
 
 ## Touch ID (macOS)
 
